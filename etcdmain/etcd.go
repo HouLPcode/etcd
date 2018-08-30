@@ -82,6 +82,7 @@ func startEtcdOrProxyV2() {
 
 	if lg == nil {
 		// TODO: remove in 3.5
+		plog.Infof("-------------HLP modify-----------------------")
 		plog.Infof("etcd Version: %s\n", version.Version)
 		plog.Infof("Git SHA: %s\n", version.GitSHA)
 		plog.Infof("Go Version: %s\n", runtime.Version())
