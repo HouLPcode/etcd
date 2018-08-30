@@ -39,18 +39,18 @@ import (
 
 // A key-value stream backed by raft
 type raftNode struct {
-	proposeC    <-chan string            // proposed messages (k,v)
-	confChangeC <-chan raftpb.ConfChange // proposed cluster config changes
-	commitC     chan<- *string           // entries committed to log (k,v)
+	proposeC    <-chan string            // proposed messages (k,v) 键值对信息
+	confChangeC <-chan raftpb.ConfChange // proposed cluster config changes 集群配置变更信息
+	commitC     chan<- *string           // entries committed to log (k,v) 提交的日志
 	errorC      chan<- error             // errors from raft session
 
-	id          int      // client ID for raft session
+	id          int      // client ID for raft session 客户端id
 	peers       []string // raft peer URLs
 	join        bool     // node is joining an existing cluster
 	waldir      string   // path to WAL directory
 	snapdir     string   // path to snapshot directory
 	getSnapshot func() ([]byte, error)
-	lastIndex   uint64 // index of log at start
+	lastIndex   uint64 // index of log at start 日志开始的索引
 
 	confState     raftpb.ConfState
 	snapshotIndex uint64
@@ -106,6 +106,65 @@ func newRaftNode(id int, peers []string, join bool, getSnapshot func() ([]byte, 
 	go rc.startRaft()
 	return commitC, errorC, rc.snapshotterReady
 }
+
+func (rc *raftNode) startRaft() {
+	if !fileutil.Exist(rc.snapdir) {
+		if err := os.Mkdir(rc.snapdir, 0750); err != nil {
+			log.Fatalf("raftexample: cannot create dir for snapshot (%v)", err)
+		}
+	}
+	rc.snapshotter = snap.New(zap.NewExample(), rc.snapdir)
+	rc.snapshotterReady <- rc.snapshotter
+
+	oldwal := wal.Exist(rc.waldir)
+	rc.wal = rc.replayWAL()
+
+	rpeers := make([]raft.Peer, len(rc.peers))
+	for i := range rpeers {
+		rpeers[i] = raft.Peer{ID: uint64(i + 1)}
+	}
+	c := &raft.Config{
+		ID:              uint64(rc.id),
+		ElectionTick:    10,
+		HeartbeatTick:   1,
+		Storage:         rc.raftStorage,
+		MaxSizePerMsg:   1024 * 1024,
+		MaxInflightMsgs: 256,
+	}
+
+	if oldwal {
+		//重启raft服务
+		rc.node = raft.RestartNode(c)
+	} else {
+		startPeers := rpeers
+		if rc.join {
+			startPeers = nil
+		}
+		//新启动raft服务
+		rc.node = raft.StartNode(c, startPeers)
+	}
+
+	rc.transport = &rafthttp.Transport{
+		Logger:      zap.NewExample(),
+		ID:          types.ID(rc.id),
+		ClusterID:   0x1000,
+		Raft:        rc,
+		ServerStats: stats.NewServerStats("", ""),
+		LeaderStats: stats.NewLeaderStats(strconv.Itoa(rc.id)),
+		ErrorC:      make(chan error),
+	}
+
+	rc.transport.Start()
+	for i := range rc.peers {
+		if i+1 != rc.id {
+			rc.transport.AddPeer(types.ID(i+1), []string{rc.peers[i]})
+		}
+	}
+
+	go rc.serveRaft()
+	go rc.serveChannels()
+}
+
 
 func (rc *raftNode) saveSnap(snap raftpb.Snapshot) error {
 	// must save the snapshot index to the WAL before saving the
@@ -255,62 +314,6 @@ func (rc *raftNode) writeError(err error) {
 	rc.errorC <- err
 	close(rc.errorC)
 	rc.node.Stop()
-}
-
-func (rc *raftNode) startRaft() {
-	if !fileutil.Exist(rc.snapdir) {
-		if err := os.Mkdir(rc.snapdir, 0750); err != nil {
-			log.Fatalf("raftexample: cannot create dir for snapshot (%v)", err)
-		}
-	}
-	rc.snapshotter = snap.New(zap.NewExample(), rc.snapdir)
-	rc.snapshotterReady <- rc.snapshotter
-
-	oldwal := wal.Exist(rc.waldir)
-	rc.wal = rc.replayWAL()
-
-	rpeers := make([]raft.Peer, len(rc.peers))
-	for i := range rpeers {
-		rpeers[i] = raft.Peer{ID: uint64(i + 1)}
-	}
-	c := &raft.Config{
-		ID:              uint64(rc.id),
-		ElectionTick:    10,
-		HeartbeatTick:   1,
-		Storage:         rc.raftStorage,
-		MaxSizePerMsg:   1024 * 1024,
-		MaxInflightMsgs: 256,
-	}
-
-	if oldwal {
-		rc.node = raft.RestartNode(c)
-	} else {
-		startPeers := rpeers
-		if rc.join {
-			startPeers = nil
-		}
-		rc.node = raft.StartNode(c, startPeers)
-	}
-
-	rc.transport = &rafthttp.Transport{
-		Logger:      zap.NewExample(),
-		ID:          types.ID(rc.id),
-		ClusterID:   0x1000,
-		Raft:        rc,
-		ServerStats: stats.NewServerStats("", ""),
-		LeaderStats: stats.NewLeaderStats(strconv.Itoa(rc.id)),
-		ErrorC:      make(chan error),
-	}
-
-	rc.transport.Start()
-	for i := range rc.peers {
-		if i+1 != rc.id {
-			rc.transport.AddPeer(types.ID(i+1), []string{rc.peers[i]})
-		}
-	}
-
-	go rc.serveRaft()
-	go rc.serveChannels()
 }
 
 // stop closes http, closes all channels, and stops raft.
