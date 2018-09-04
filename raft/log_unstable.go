@@ -24,14 +24,14 @@ type unstable struct {
 	// the incoming unstable snapshot, if any.
 	snapshot *pb.Snapshot
 	// all entries that have not yet been written to storage.
-	entries []pb.Entry
+	entries []pb.Entry//未写入storage中的entry
 	offset  uint64
 
 	logger Logger
 }
 
 // maybeFirstIndex returns the index of the first possible entry in entries
-// if it has a snapshot.
+// if it has a snapshot. 第一条
 func (u *unstable) maybeFirstIndex() (uint64, bool) {
 	if u.snapshot != nil {
 		return u.snapshot.Metadata.Index + 1, true
@@ -40,7 +40,7 @@ func (u *unstable) maybeFirstIndex() (uint64, bool) {
 }
 
 // maybeLastIndex returns the last index if it has at least one
-// unstable entry or snapshot.
+// unstable entry or snapshot. 最后一条
 func (u *unstable) maybeLastIndex() (uint64, bool) {
 	if l := len(u.entries); l != 0 {
 		return u.offset + uint64(l) - 1, true
@@ -52,7 +52,7 @@ func (u *unstable) maybeLastIndex() (uint64, bool) {
 }
 
 // maybeTerm returns the term of the entry at index i, if there
-// is any.
+// is any. 获取第i条entry对应的term
 func (u *unstable) maybeTerm(i uint64) (uint64, bool) {
 	if i < u.offset {
 		if u.snapshot == nil {
@@ -74,6 +74,7 @@ func (u *unstable) maybeTerm(i uint64) (uint64, bool) {
 	return u.entries[i-u.offset].Term, true
 }
 
+//entry写入storage中之后，调用该函数清除相应的entry
 func (u *unstable) stableTo(i, t uint64) {
 	gt, ok := u.maybeTerm(i)
 	if !ok {
@@ -93,6 +94,7 @@ func (u *unstable) stableTo(i, t uint64) {
 // if most of it isn't being used. This avoids holding references to a bunch of
 // potentially large entries that aren't needed anymore. Simply clearing the
 // entries wouldn't be safe because clients might still be using them.
+// 底层数组长度超过实际占用长度的两倍时，对底层数据进行缩减
 func (u *unstable) shrinkEntriesArray() {
 	// We replace the array if we're using less than half of the space in
 	// it. This number is fairly arbitrary, chosen as an attempt to balance

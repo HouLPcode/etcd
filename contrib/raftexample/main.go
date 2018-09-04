@@ -28,9 +28,9 @@ func main() {
 	join := flag.Bool("join", false, "join an existing cluster")
 	flag.Parse()
 
-	proposeC := make(chan string)
+	proposeC := make(chan string)//无缓冲
 	defer close(proposeC)
-	confChangeC := make(chan raftpb.ConfChange)
+	confChangeC := make(chan raftpb.ConfChange)//无缓冲
 	defer close(confChangeC)
 
 	// raft provides a commit stream for the proposals from the http api

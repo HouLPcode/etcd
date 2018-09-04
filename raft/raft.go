@@ -112,7 +112,7 @@ func (st StateType) String() string {
 // Config contains the parameters to start a raft.
 type Config struct {
 	// ID is the identity of the local raft. ID cannot be 0.
-	ID uint64
+	ID uint64//节点ID
 
 	// peers contains the IDs of all nodes (including self) in the raft cluster. It
 	// should only be set when starting a new raft cluster. Restarting raft from
@@ -123,7 +123,7 @@ type Config struct {
 	// learners contains the IDs of all learner nodes (including self if the
 	// local node is a learner) in the raft cluster. learners only receives
 	// entries from the leader node. It does not vote or promote itself.
-	learners []uint64
+	learners []uint64//所有的learner节点，只接收leader节点信息，不投票，不自我选举？
 
 	// ElectionTick is the number of Node.Tick invocations that must pass between
 	// elections. That is, if a follower does not receive any message from the
@@ -141,12 +141,12 @@ type Config struct {
 	// stored in storage. raft reads the persisted entries and states out of
 	// Storage when it needs. raft reads out the previous state and configuration
 	// out of storage when restarting.
-	Storage Storage
+	Storage Storage//节点存储信息entries and states
 	// Applied is the last applied index. It should only be set when restarting
 	// raft. raft will not return entries to the application smaller or equal to
 	// Applied. If Applied is unset when restarting, raft might return previous
 	// applied entries. This is a very application dependent configuration.
-	Applied uint64
+	Applied uint64//最新应用的记录位置，重启时设置
 
 	// MaxSizePerMsg limits the max size of each append message. Smaller value
 	// lowers the raft recovery cost(initial probing and message lost during normal
@@ -231,36 +231,36 @@ func (c *Config) validate() error {
 }
 
 type raft struct {
-	id uint64
+	id uint64 //节点ID
 
 	Term uint64
-	Vote uint64
+	Vote uint64 //投票给谁
 
-	readStates []ReadState
+	readStates []ReadState //只读请求相关
 
 	// the log
-	raftLog *raftLog
+	raftLog *raftLog //本地log
 
-	maxInflight int
+	maxInflight int //已发送未接收响应的消息个数上限
 	maxMsgSize  uint64
 	prs         map[uint64]*Progress
 	learnerPrs  map[uint64]*Progress
 	matchBuf    uint64Slice
 
-	state StateType
+	state StateType//节点状态"StateFollower", "StateCandidate", "StateLeader", "StatePreCandidate"
 
 	// isLearner is true if the local raft node is a learner.
 	isLearner bool
 
-	votes map[uint64]bool
+	votes map[uint64]bool//投票结果
 
-	msgs []pb.Message
+	msgs []pb.Message//缓存当前节点发送出去的消息
 
 	// the leader id
 	lead uint64
 	// leadTransferee is id of the leader transfer target when its value is not zero.
 	// Follow the procedure defined in raft thesis 3.10.
-	leadTransferee uint64
+	leadTransferee uint64//领导节点转移的目标id
 	// Only one conf change may be pending (in the log, but not yet
 	// applied) at a time. This is enforced via pendingConfIndex, which
 	// is set to a value >= the log index of the latest pending
@@ -281,19 +281,19 @@ type raft struct {
 	// only leader keeps heartbeatElapsed.
 	heartbeatElapsed int
 
-	checkQuorum bool
-	preVote     bool
+	checkQuorum bool//定期的与follower节点建立连接
+	preVote     bool//发起投票之前的过程，先与其他节点建立一次连接，防止term值一直增加
 
 	heartbeatTimeout int
 	electionTimeout  int
 	// randomizedElectionTimeout is a random number between
 	// [electiontimeout, 2 * electiontimeout - 1]. It gets reset
 	// when raft changes its state to follower or candidate.
-	randomizedElectionTimeout int
+	randomizedElectionTimeout int//在[electiontimeout, 2 * electiontimeout - 1]之间的随机值，超时启动选举过程
 	disableProposalForwarding bool
 
-	tick func()
-	step stepFunc
+	tick func()//逻辑时钟函数
+	step stepFunc//收到信息后的处理函数
 
 	logger Logger
 }
@@ -355,7 +355,7 @@ func newRaft(c *Config) *raft {
 	if c.Applied > 0 {
 		raftlog.appliedTo(c.Applied)
 	}
-	r.becomeFollower(r.Term, None)
+	r.becomeFollower(r.Term, None)//默认初始状态都时follower节点
 
 	var nodesStrs []string
 	for _, n := range r.nodes() {
@@ -378,7 +378,7 @@ func (r *raft) hardState() pb.HardState {
 		Commit: r.raftLog.committed,
 	}
 }
-
+//半数节点个数
 func (r *raft) quorum() int { return len(r.prs)/2 + 1 }
 
 func (r *raft) nodes() []uint64 {
@@ -638,7 +638,7 @@ func (r *raft) tickElection() {
 
 	if r.promotable() && r.pastElectionTimeout() {
 		r.electionElapsed = 0
-		r.Step(pb.Message{From: r.id, Type: pb.MsgHup})
+		r.Step(pb.Message{From: r.id, Type: pb.MsgHup})//发送MsgHup消息进行节点选举
 	}
 }
 
@@ -726,10 +726,11 @@ func (r *raft) becomeLeader() {
 	r.appendEntry(pb.Entry{Data: nil})
 	r.logger.Infof("%x became leader at term %d", r.id, r.Term)
 }
-
+//状态转换并发送响应的消息
 func (r *raft) campaign(t CampaignType) {
 	var term uint64
 	var voteMsg pb.MessageType
+	//状态切换
 	if t == campaignPreElection {
 		r.becomePreCandidate()
 		voteMsg = pb.MsgPreVote
@@ -740,6 +741,7 @@ func (r *raft) campaign(t CampaignType) {
 		voteMsg = pb.MsgVote
 		term = r.Term
 	}
+	//统计收到的选票，此处主要时处理单节点
 	if r.quorum() == r.poll(r.id, voteRespMsgType(voteMsg), true) {
 		// We won the election after voting for ourselves (which must mean that
 		// this is a single-node cluster). Advance to the next state.
@@ -750,6 +752,7 @@ func (r *raft) campaign(t CampaignType) {
 		}
 		return
 	}
+	//状态切换完成，向集群中发送指定类型消息
 	for id := range r.prs {
 		if id == r.id {
 			continue
@@ -764,7 +767,7 @@ func (r *raft) campaign(t CampaignType) {
 		r.send(pb.Message{Term: term, To: id, Type: voteMsg, Index: r.raftLog.lastIndex(), LogTerm: r.raftLog.lastTerm(), Context: ctx})
 	}
 }
-
+//将收到的投票写入votes字段，返回得票数
 func (r *raft) poll(id uint64, t pb.MessageType, v bool) (granted int) {
 	if v {
 		r.logger.Infof("%x received %s from %x at term %d", r.id, t, id, r.Term)
@@ -781,13 +784,13 @@ func (r *raft) poll(id uint64, t pb.MessageType, v bool) (granted int) {
 	}
 	return granted
 }
-
+//对各类消息进行处理
 func (r *raft) Step(m pb.Message) error {
 	// Handle the message term, which may result in our stepping down to a follower.
 	switch {
 	case m.Term == 0:
 		// local message
-	case m.Term > r.Term:
+	case m.Term > r.Term://收到的大于本节点的term
 		if m.Type == pb.MsgVote || m.Type == pb.MsgPreVote {
 			force := bytes.Equal(m.Context, []byte(campaignTransfer))
 			inLease := r.checkQuorum && r.lead != None && r.electionElapsed < r.electionTimeout
@@ -857,8 +860,9 @@ func (r *raft) Step(m pb.Message) error {
 		return nil
 	}
 
+	//对不同消息类型进行处理
 	switch m.Type {
-	case pb.MsgHup:
+	case pb.MsgHup://节点选举
 		if r.state != StateLeader {
 			ents, err := r.raftLog.slice(r.raftLog.applied+1, r.raftLog.committed+1, noLimit)
 			if err != nil {
@@ -1327,6 +1331,7 @@ func (r *raft) restoreNode(nodes []uint64, isLearner bool) {
 
 // promotable indicates whether state machine can be promoted to leader,
 // which is true when its own id is in progress list.
+//检查prs中是否有当前节点的progress实例，为了检查当前节点是否被移出集群
 func (r *raft) promotable() bool {
 	_, ok := r.prs[r.id]
 	return ok
@@ -1423,7 +1428,7 @@ func (r *raft) loadState(state pb.HardState) {
 // pastElectionTimeout returns true iff r.electionElapsed is greater
 // than or equal to the randomized election timeout in
 // [electiontimeout, 2 * electiontimeout - 1].
-func (r *raft) pastElectionTimeout() bool {
+func (r *raft) pastElectionTimeout() bool {//达到超时时间
 	return r.electionElapsed >= r.randomizedElectionTimeout
 }
 

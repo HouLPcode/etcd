@@ -34,8 +34,9 @@ func (st ProgressStateType) String() string { return prstmap[uint64(st)] }
 
 // Progress represents a follower’s progress in the view of the leader. Leader maintains
 // progresses of all followers, and sends entries to the follower based on its progress.
+//跟随节点相关的信息
 type Progress struct {
-	Match, Next uint64
+	Match, Next uint64//成功复制的entry索引值，下一个待复制的索引值
 	// State defines how the leader should interact with the follower.
 	//
 	// When in ProgressStateProbe, leader sends at most one replication message
@@ -47,7 +48,7 @@ type Progress struct {
 	//
 	// When in ProgressStateSnapshot, leader should have sent out snapshot
 	// before and stops sending any replication message.
-	State ProgressStateType
+	State ProgressStateType  //follower节点复制状态
 
 	// Paused is used in ProgressStateProbe.
 	// When Paused is true, raft should pause sending replication message to this peer.
@@ -76,7 +77,7 @@ type Progress struct {
 	// When a leader receives a reply, the previous inflights should
 	// be freed by calling inflights.freeTo with the index of the last
 	// received entry.
-	ins *inflights
+	ins *inflights//已发送未收到响应的消息
 
 	// IsLearner is true if this progress is tracked for a learner.
 	IsLearner bool

@@ -39,34 +39,37 @@ var ErrSnapshotTemporarilyUnavailable = errors.New("snapshot is temporarily unav
 
 // Storage is an interface that may be implemented by the application
 // to retrieve log entries from storage.
-//
+//应用程序从storage中恢复日志信息
 // If any Storage method returns an error, the raft instance will
 // become inoperable and refuse to participate in elections; the
 // application is responsible for cleanup and recovery in this case.
-type Storage interface {
+//如果下面的方法返回错误，raft将不可操作，不参加选举
+//应用程序负责清楚错误，恢复功能
+type Storage interface {//用来存储当前节点收到的entry信息
 	// InitialState returns the saved HardState and ConfState information.
 	InitialState() (pb.HardState, pb.ConfState, error)
 	// Entries returns a slice of log entries in the range [lo,hi).
 	// MaxSize limits the total size of the log entries returned, but
 	// Entries returns at least one entry if any.
+	//返回指定范围的entry信息
 	Entries(lo, hi, maxSize uint64) ([]pb.Entry, error)
 	// Term returns the term of entry i, which must be in the range
 	// [FirstIndex()-1, LastIndex()]. The term of the entry before
 	// FirstIndex is retained for matching purposes even though the
 	// rest of that entry may not be available.
-	Term(i uint64) (uint64, error)
+	Term(i uint64) (uint64, error)//第i个entry对应的任期号
 	// LastIndex returns the index of the last entry in the log.
-	LastIndex() (uint64, error)
+	LastIndex() (uint64, error)//最后一个entry的索引
 	// FirstIndex returns the index of the first log entry that is
 	// possibly available via Entries (older entries have been incorporated
 	// into the latest Snapshot; if storage only contains the dummy entry the
 	// first log entry is not available).
-	FirstIndex() (uint64, error)
+	FirstIndex() (uint64, error)//可用的第一条entry，之前的都已经包含在快照中
 	// Snapshot returns the most recent snapshot.
 	// If snapshot is temporarily unavailable, it should return ErrSnapshotTemporarilyUnavailable,
 	// so raft state machine could know that Storage needs some time to prepare
 	// snapshot and call Snapshot later.
-	Snapshot() (pb.Snapshot, error)
+	Snapshot() (pb.Snapshot, error)//最近一次生成的快照数据
 }
 
 // MemoryStorage implements the Storage interface backed by an
@@ -169,6 +172,7 @@ func (ms *MemoryStorage) Snapshot() (pb.Snapshot, error) {
 
 // ApplySnapshot overwrites the contents of this Storage object with
 // those of the given snapshot.
+//将snap快照数据存储到MemoryStorage中
 func (ms *MemoryStorage) ApplySnapshot(snap pb.Snapshot) error {
 	ms.Lock()
 	defer ms.Unlock()
@@ -189,6 +193,7 @@ func (ms *MemoryStorage) ApplySnapshot(snap pb.Snapshot) error {
 // can be used to reconstruct the state at that point.
 // If any configuration changes have been made since the last compaction,
 // the result of the last ApplyConfChange must be passed in.
+// 创建快照
 func (ms *MemoryStorage) CreateSnapshot(i uint64, cs *pb.ConfState, data []byte) (pb.Snapshot, error) {
 	ms.Lock()
 	defer ms.Unlock()
@@ -213,6 +218,7 @@ func (ms *MemoryStorage) CreateSnapshot(i uint64, cs *pb.ConfState, data []byte)
 // Compact discards all log entries prior to compactIndex.
 // It is the application's responsibility to not attempt to compact an index
 // greater than raftLog.applied.
+// 压缩，即抛弃compactIndex之前的所有entry
 func (ms *MemoryStorage) Compact(compactIndex uint64) error {
 	ms.Lock()
 	defer ms.Unlock()
@@ -236,6 +242,7 @@ func (ms *MemoryStorage) Compact(compactIndex uint64) error {
 // Append the new entries to storage.
 // TODO (xiangli): ensure the entries are continuous and
 // entries[0].Index > ms.entries[0].Index
+// 追加entry到MemoryStorage中
 func (ms *MemoryStorage) Append(entries []pb.Entry) error {
 	if len(entries) == 0 {
 		return nil
