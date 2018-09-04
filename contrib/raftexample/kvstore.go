@@ -66,6 +66,7 @@ func (s *kvstore) Propose(k string, v string) {
 	s.proposeC <- buf.String()
 }
 
+//将commitC中的信息存储到kvStory中
 func (s *kvstore) readCommits(commitC <-chan *string, errorC <-chan error) {
 	for data := range commitC {
 		if data == nil {

@@ -32,6 +32,7 @@ type httpKVAPI struct {
 func (h *httpKVAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	key := r.RequestURI
 	switch {
+	//存储，curl -L http://127.0.0.1:12380/my-key -XPUT -d hello
 	case r.Method == "PUT":
 		v, err := ioutil.ReadAll(r.Body)
 		if err != nil {
@@ -45,6 +46,7 @@ func (h *httpKVAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Optimistic-- no waiting for ack from raft. Value is not yet
 		// committed so a subsequent GET on the key may return old value
 		w.WriteHeader(http.StatusNoContent)
+	//查询 curl -L http://127.0.0.1:12380/my-key
 	case r.Method == "GET":
 		if v, ok := h.store.Lookup(key); ok {
 			w.Write([]byte(v))
