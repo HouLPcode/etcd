@@ -62,6 +62,8 @@ etcd_build() {
 		-installsuffix cgo \
 		-ldflags "$GO_LDFLAGS" \
 		-o "${out}/etcdctl" ${REPO_PATH}/etcdctl || return
+	#build raftexample
+	go build -o "${out}/raftexample" ${REPO_PATH}/contrib/raftexample || return
 }
 
 tools_build() {

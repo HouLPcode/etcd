@@ -167,7 +167,6 @@ func (rc *raftNode) startRaft() {
 	go rc.serveChannels()
 }
 
-
 // replayWAL replays WAL entries into the raft instance.
 func (rc *raftNode) replayWAL() *wal.WAL {
 	log.Printf("replaying WAL of member %d", rc.id)
@@ -180,9 +179,9 @@ func (rc *raftNode) replayWAL() *wal.WAL {
 	if err != nil {
 		log.Fatalf("raftexample: failed to read WAL (%v)", err)
 	}
-	rc.raftStorage = raft.NewMemoryStorage()//??????????????????????????????????
+	rc.raftStorage = raft.NewMemoryStorage()
 	if snapshot != nil {
-		rc.raftStorage.ApplySnapshot(*snapshot)//将快照数据加载到MemoryStorage
+		rc.raftStorage.ApplySnapshot(*snapshot) //将快照数据加载到MemoryStorage
 	}
 	rc.raftStorage.SetHardState(st)
 
@@ -235,7 +234,7 @@ func (rc *raftNode) openWAL(snapshot *raftpb.Snapshot) *wal.WAL {
 
 //监听当前节点地址，完成与其他节点的通信
 func (rc *raftNode) serveRaft() {
-	url, err := url.Parse(rc.peers[rc.id-1])//节点id是网络中节点变更请求的个数，从0开始
+	url, err := url.Parse(rc.peers[rc.id-1]) //获取当前节点的URL地址
 	if err != nil {
 		log.Fatalf("raftexample: Failed parsing URL (%v)", err)
 	}
@@ -245,7 +244,7 @@ func (rc *raftNode) serveRaft() {
 		log.Fatalf("raftexample: Failed to listen rafthttp (%v)", err)
 	}
 
-	err = (&http.Server{Handler: rc.transport.Handler()}).Serve(ln)//一直阻塞，直到http.server关闭。goroutine中处理handle
+	err = (&http.Server{Handler: rc.transport.Handler()}).Serve(ln) //一直阻塞，直到http.server关闭。goroutine中处理handle
 	select {
 	case <-rc.httpstopc:
 	default:
@@ -275,13 +274,14 @@ func (rc *raftNode) serveChannels() {
 	go func() {
 		confChangeCount := uint64(0)
 
-		for rc.proposeC != nil && rc.confChangeC != nil {///？？？？？？？？？？？？？？？？？？？通道什么时候时nil？？？？？？？？？？？
+		for rc.proposeC != nil && rc.confChangeC != nil { ///？？？？？？？？？？？？？？？？？？？通道什么时候时nil？？？？？？？？？？？
 			select {
 			case prop, ok := <-rc.proposeC:
 				if !ok {
-					rc.proposeC = nil//让GC回收通道？？？？？？这种编程方式需要进一步熟悉？？？？？？？？？？？？？？？？？？？？？？？
+					rc.proposeC = nil //让GC回收通道？？？？？？这种编程方式需要进一步熟悉？？？？？？？？？？？？？？？？？？？？？？？
 				} else {
 					// blocks until accepted by raft state machine
+					//raft节点做的处理
 					rc.node.Propose(context.TODO(), []byte(prop))
 				}
 
@@ -289,8 +289,9 @@ func (rc *raftNode) serveChannels() {
 				if !ok {
 					rc.confChangeC = nil
 				} else {
-					confChangeCount++//集群请求变更的个数作为网络id
+					confChangeCount++ //集群请求变更的个数作为网络id
 					cc.ID = confChangeCount
+					//raft节点做的处理
 					rc.node.ProposeConfChange(context.TODO(), cc)
 				}
 			}
@@ -304,24 +305,28 @@ func (rc *raftNode) serveChannels() {
 	for {
 		select {
 		case <-ticker.C:
+			//raft的逻辑时钟脉冲
 			rc.node.Tick()
 
 			// store raft entries to wal, then publish over commit channel
+			// raft提供的服务
 		case rd := <-rc.node.Ready():
 			rc.wal.Save(rd.HardState, rd.Entries)
-			if !raft.IsEmptySnap(rd.Snapshot) {//有新的快照数据
+			if !raft.IsEmptySnap(rd.Snapshot) { //有新的快照数据
 				rc.saveSnap(rd.Snapshot)
 				rc.raftStorage.ApplySnapshot(rd.Snapshot)
 				rc.publishSnapshot(rd.Snapshot)
 			}
 			rc.raftStorage.Append(rd.Entries)
-			rc.transport.Send(rd.Messages)//发送消息
+			rc.transport.Send(rd.Messages) //发送消息
+			//应用entry
 			if ok := rc.publishEntries(rc.entriesToApply(rd.CommittedEntries)); !ok {
 				rc.stop()
 				return
 			}
-			rc.maybeTriggerSnapshot()//创建快照
-			rc.node.Advance()//通知raft准备返回下一个Ready实例
+			rc.maybeTriggerSnapshot() //创建快照
+			//Ready数据处理完之后需要调用Advance方法
+			rc.node.Advance()         //通知raft准备返回下一个Ready实例
 
 		case err := <-rc.transport.ErrorC:
 			rc.writeError(err)
@@ -377,6 +382,7 @@ func (rc *raftNode) publishEntries(ents []raftpb.Entry) bool {
 			}
 			s := string(ents[i].Data)
 			select {
+			//应用后将要存储的信息通过commitC通道通知kv进行实际的存储
 			case rc.commitC <- &s:
 			case <-rc.stopc:
 				return false
@@ -486,7 +492,6 @@ func (rc *raftNode) maybeTriggerSnapshot() {
 	log.Printf("compacted log at index %d", compactIndex)
 	rc.snapshotIndex = rc.appliedIndex
 }
-
 
 func (rc *raftNode) Process(ctx context.Context, m raftpb.Message) error {
 	return rc.node.Step(ctx, m)

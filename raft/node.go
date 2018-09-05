@@ -64,19 +64,19 @@ type Ready struct {
 	// when its applied index is greater than the index in ReadState.
 	// Note that the readState will be returned when raft receives msgReadIndex.
 	// The returned is only valid for the request that requested to read.
-	ReadStates []ReadState
+	ReadStates []ReadState//当前节点等待处理的只读请求
 
 	// Entries specifies entries to be saved to stable storage BEFORE
 	// Messages are sent.
-	Entries []pb.Entry
+	Entries []pb.Entry//从unstable中读取的数据
 
 	// Snapshot specifies the snapshot to be saved to stable storage.
-	Snapshot pb.Snapshot
+	Snapshot pb.Snapshot//待持久化的快照数据
 
 	// CommittedEntries specifies entries to be committed to a
 	// store/state-machine. These have previously been committed to stable
 	// store.
-	CommittedEntries []pb.Entry
+	CommittedEntries []pb.Entry//已commit待应用的数据
 
 	// Messages specifies outbound messages to be sent AFTER Entries are
 	// committed to stable storage.
@@ -103,7 +103,7 @@ func IsEmptySnap(sp pb.Snapshot) bool {
 	return sp.Metadata.Index == 0
 }
 
-func (rd Ready) containsUpdates() bool {
+func (rd Ready) containsUpdates() bool {//是否包含更新数据，需要传递给上层处理
 	return rd.SoftState != nil || !IsEmptyHardState(rd.HardState) ||
 		!IsEmptySnap(rd.Snapshot) || len(rd.Entries) > 0 ||
 		len(rd.CommittedEntries) > 0 || len(rd.Messages) > 0 || len(rd.ReadStates) != 0
@@ -113,24 +113,24 @@ func (rd Ready) containsUpdates() bool {
 type Node interface {
 	// Tick increments the internal logical clock for the Node by a single tick. Election
 	// timeouts and heartbeat timeouts are in units of ticks.
-	Tick()
+	Tick()//内部逻辑时钟
 	// Campaign causes the Node to transition to candidate state and start campaigning to become leader.
-	Campaign(ctx context.Context) error
+	Campaign(ctx context.Context) error//转换到candidate状态，开始竞选leader节点
 	// Propose proposes that data be appended to the log.
-	Propose(ctx context.Context, data []byte) error
+	Propose(ctx context.Context, data []byte) error//data数据添加到log
 	// ProposeConfChange proposes config change.
 	// At most one ConfChange can be in the process of going through consensus.
 	// Application needs to call ApplyConfChange when applying EntryConfChange type entry.
 	ProposeConfChange(ctx context.Context, cc pb.ConfChange) error
 	// Step advances the state machine using the given message. ctx.Err() will be returned, if any.
-	Step(ctx context.Context, msg pb.Message) error
+	Step(ctx context.Context, msg pb.Message) error//msg消息处理
 
 	// Ready returns a channel that returns the current point-in-time state.
 	// Users of the Node must call Advance after retrieving the state returned by Ready.
 	//
 	// NOTE: No committed entries from the next Ready may be applied until all committed entries
 	// and snapshots from the previous one have finished.
-	Ready() <-chan Ready
+	Ready() <-chan Ready//通过channel返回当前的状态
 
 	// Advance notifies the Node that the application has saved progress up to the last Ready.
 	// It prepares the node to return the next available Ready.
@@ -141,7 +141,7 @@ type Node interface {
 	// commands. For example. when the last Ready contains a snapshot, the application might take
 	// a long time to apply the snapshot data. To continue receiving Ready without blocking raft
 	// progress, it can call Advance before finishing applying the last ready.
-	Advance()
+	Advance()//在Ready函数之后调用那，通知底层返回新的ready实例
 	// ApplyConfChange applies config change to the local node.
 	// Returns an opaque ConfState protobuf which must be recorded
 	// in snapshots. Will never return nil; it returns a pointer only
@@ -149,22 +149,22 @@ type Node interface {
 	ApplyConfChange(cc pb.ConfChange) *pb.ConfState
 
 	// TransferLeadership attempts to transfer leadership to the given transferee.
-	TransferLeadership(ctx context.Context, lead, transferee uint64)
+	TransferLeadership(ctx context.Context, lead, transferee uint64)//节点转移
 
 	// ReadIndex request a read state. The read state will be set in the ready.
 	// Read state has a read index. Once the application advances further than the read
 	// index, any linearizable read requests issued before the read request can be
 	// processed safely. The read state will have the same rctx attached.
-	ReadIndex(ctx context.Context, rctx []byte) error
+	ReadIndex(ctx context.Context, rctx []byte) error//只读请求
 
 	// Status returns the current status of the raft state machine.
 	Status() Status
 	// ReportUnreachable reports the given node is not reachable for the last send.
-	ReportUnreachable(id uint64)
+	ReportUnreachable(id uint64)//当前节点无法与id节点通信
 	// ReportSnapshot reports the status of the sent snapshot.
-	ReportSnapshot(id uint64, status SnapshotStatus)
+	ReportSnapshot(id uint64, status SnapshotStatus)//返回发送快照的结果
 	// Stop performs any necessary termination of the Node.
-	Stop()
+	Stop()//关闭节点
 }
 
 type Peer struct {
@@ -191,7 +191,7 @@ func StartNode(c *Config, peers []Peer) Node {
 	// Mark these initial entries as committed.
 	// TODO(bdarnell): These entries are still unstable; do we need to preserve
 	// the invariant that committed < unstable?
-	r.raftLog.committed = r.raftLog.lastIndex()
+	r.raftLog.committed = r.raftLog.lastIndex()//提交上一条记录
 	// Now apply them, mainly so that the application can call Campaign
 	// immediately after StartNode in tests. Note that these nodes will
 	// be added to raft twice: here and when the application's Ready
@@ -231,8 +231,8 @@ type msgWithResult struct {
 
 // node is the canonical implementation of the Node interface
 type node struct {
-	propc      chan msgWithResult
-	recvc      chan pb.Message
+	propc      chan msgWithResult//msgProo类型消息
+	recvc      chan pb.Message//除msgProo其他类型的消息
 	confc      chan pb.ConfChange
 	confstatec chan pb.ConfState
 	readyc     chan Ready
@@ -275,13 +275,14 @@ func (n *node) Stop() {
 	<-n.done
 }
 
+//处理node结构体中封装的多个通道
 func (n *node) run(r *raft) {
 	var propc chan msgWithResult
 	var readyc chan Ready
 	var advancec chan struct{}
 	var prevLastUnstablei, prevLastUnstablet uint64
 	var havePrevLastUnstablei bool
-	var prevSnapi uint64
+	var prevSnapi uint64//快照中最后一条索引值
 	var rd Ready
 
 	lead := None
@@ -289,18 +290,18 @@ func (n *node) run(r *raft) {
 	prevHardSt := emptyState
 
 	for {
-		if advancec != nil {
+		if advancec != nil {//上层正在处理readyc，不能继续写入
 			readyc = nil
 		} else {
 			rd = newReady(r, prevSoftSt, prevHardSt)
-			if rd.containsUpdates() {
+			if rd.containsUpdates() {//是否有要提交的数据
 				readyc = n.readyc
 			} else {
-				readyc = nil
+				readyc = nil//各个字段为空
 			}
 		}
 
-		if lead != r.lead {
+		if lead != r.lead {//当前节点是否发生变化
 			if r.hasLeader() {
 				if lead == None {
 					r.logger.Infof("raft.node: %x elected leader %x at term %d", r.id, r.lead, r.Term)
@@ -489,6 +490,7 @@ func (n *node) stepWithWaitOption(ctx context.Context, m pb.Message, wait bool) 
 
 func (n *node) Ready() <-chan Ready { return n.readyc }
 
+//ready是否处理完
 func (n *node) Advance() {
 	select {
 	case n.advancec <- struct{}{}:
