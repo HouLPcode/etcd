@@ -11,7 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
+//循环的创建文件，等待open，之后再创建文件
 package wal
 
 import (
@@ -31,10 +31,11 @@ type filePipeline struct {
 	// dir to put files
 	dir string
 	// size of files to make, in bytes
-	size int64
+	size int64//默认64M
 	// count number of files generated
-	count int
+	count int//已经创建文件的数量
 
+	//通道
 	filec chan *fileutil.LockedFile
 	errc  chan error
 	donec chan struct{}
@@ -71,9 +72,11 @@ func (fp *filePipeline) Close() error {
 func (fp *filePipeline) alloc() (f *fileutil.LockedFile, err error) {
 	// count % 2 so this file isn't the same as the one last published
 	fpath := filepath.Join(fp.dir, fmt.Sprintf("%d.tmp", fp.count%2))
+	//创建文件
 	if f, err = fileutil.LockFile(fpath, os.O_CREATE|os.O_WRONLY, fileutil.PrivateFileMode); err != nil {
 		return nil, err
 	}
+	//给文件预先分配空间
 	if err = fileutil.Preallocate(f.File, fp.size, true); err != nil {
 		if fp.lg != nil {
 			fp.lg.Warn("failed to preallocate space when creating a new WAL", zap.Int64("size", fp.size), zap.Error(err))
@@ -87,6 +90,8 @@ func (fp *filePipeline) alloc() (f *fileutil.LockedFile, err error) {
 	return f, nil
 }
 
+//创建文件，阻塞等待open，在创建文件
+//文件处理完后会被删除
 func (fp *filePipeline) run() {
 	defer close(fp.errc)
 	for {

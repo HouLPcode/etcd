@@ -36,11 +36,11 @@ import (
 )
 
 const (
-	metadataType int64 = iota + 1
-	entryType
-	stateType
+	metadataType int64 = iota + 1//每个WAL日志的开头
+	entryType//记录类型
+	stateType//每次批量写入entry之前记录一条，hardstate
 	crcType
-	snapshotType
+	snapshotType//其中不包含完整的快照数据
 
 	// warnSyncDuration is the amount of time allotted to an fsync before
 	// logging a warning
@@ -69,6 +69,8 @@ var (
 // A newly created WAL is in append mode, and ready for appending records.
 // A just opened WAL is in read mode, and ready for reading records.
 // The WAL will be ready for appending after reading out all the previous records.
+//有read和append两种模式。create是append模式。open是read模式。
+//read完所有之前的记录后变成append模式
 type WAL struct {
 	lg *zap.Logger
 
@@ -89,7 +91,7 @@ type WAL struct {
 	encoder *encoder // encoder to encode records
 
 	locks []*fileutil.LockedFile // the locked files the WAL holds (the name is increasing)
-	fp    *filePipeline
+	fp    *filePipeline//负责创建临时文件
 }
 
 // Create creates a WAL ready for appending records. The given metadata is
@@ -100,13 +102,13 @@ func Create(lg *zap.Logger, dirpath string, metadata []byte) (*WAL, error) {
 	}
 
 	// keep temporary wal directory so WAL initialization appears atomic
-	tmpdirpath := filepath.Clean(dirpath) + ".tmp"
+	tmpdirpath := filepath.Clean(dirpath) + ".tmp"//临时文件夹路径
 	if fileutil.Exist(tmpdirpath) {
-		if err := os.RemoveAll(tmpdirpath); err != nil {
+		if err := os.RemoveAll(tmpdirpath); err != nil {//清空临时文件
 			return nil, err
 		}
 	}
-	if err := fileutil.CreateDirAll(tmpdirpath); err != nil {
+	if err := fileutil.CreateDirAll(tmpdirpath); err != nil {//创建文件夹
 		if lg != nil {
 			lg.Warn(
 				"failed to create a temporary WAL directory",
@@ -118,7 +120,8 @@ func Create(lg *zap.Logger, dirpath string, metadata []byte) (*WAL, error) {
 		return nil, err
 	}
 
-	p := filepath.Join(tmpdirpath, walName(0, 0))
+	p := filepath.Join(tmpdirpath, walName(0, 0))//临时文件名
+	//创建临时文件
 	f, err := fileutil.LockFile(p, os.O_WRONLY|os.O_CREATE, fileutil.PrivateFileMode)
 	if err != nil {
 		if lg != nil {
@@ -130,6 +133,7 @@ func Create(lg *zap.Logger, dirpath string, metadata []byte) (*WAL, error) {
 		}
 		return nil, err
 	}
+	//移动到文件尾
 	if _, err = f.Seek(0, io.SeekEnd); err != nil {
 		if lg != nil {
 			lg.Warn(
@@ -140,6 +144,7 @@ func Create(lg *zap.Logger, dirpath string, metadata []byte) (*WAL, error) {
 		}
 		return nil, err
 	}
+	//分配指定大小空间
 	if err = fileutil.Preallocate(f.File, SegmentSizeBytes, true); err != nil {
 		if lg != nil {
 			lg.Warn(
@@ -157,21 +162,26 @@ func Create(lg *zap.Logger, dirpath string, metadata []byte) (*WAL, error) {
 		dir:      dirpath,
 		metadata: metadata,
 	}
+	//创建编码器
 	w.encoder, err = newFileEncoder(f.File, 0)
 	if err != nil {
 		return nil, err
 	}
-	w.locks = append(w.locks, f)
+	w.locks = append(w.locks, f)//添加文件句柄
+	//写入crc
 	if err = w.saveCrc(0); err != nil {
 		return nil, err
 	}
+	//写入元数据
 	if err = w.encoder.encode(&walpb.Record{Type: metadataType, Data: metadata}); err != nil {
 		return nil, err
 	}
+	//写入快照数据
 	if err = w.SaveSnapshot(walpb.Snapshot{}); err != nil {
 		return nil, err
 	}
 
+	//将临时文件夹重命名，并创建filePipeline实例
 	if w, err = w.renameWAL(tmpdirpath); err != nil {
 		if lg != nil {
 			lg.Warn(
@@ -185,6 +195,7 @@ func Create(lg *zap.Logger, dirpath string, metadata []byte) (*WAL, error) {
 	}
 
 	// directory was renamed; sync parent dir to persist rename
+	//临时目录重命名后，将信息刷新到磁盘上
 	pdir, perr := fileutil.OpenDir(filepath.Dir(w.dir))
 	if perr != nil {
 		if lg != nil {
@@ -197,6 +208,7 @@ func Create(lg *zap.Logger, dirpath string, metadata []byte) (*WAL, error) {
 		}
 		return nil, perr
 	}
+	//同步磁盘操作
 	if perr = fileutil.Fsync(pdir); perr != nil {
 		if lg != nil {
 			lg.Warn(
@@ -371,6 +383,7 @@ func openAtIndex(lg *zap.Logger, dirpath string, snap walpb.Snapshot, write bool
 // TODO: detect not-last-snap error.
 // TODO: maybe loose the checking of match.
 // After ReadAll, the WAL will be ready for appending new records.
+// 读取日志
 func (w *WAL) ReadAll() (metadata []byte, state raftpb.HardState, ents []raftpb.Entry, err error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
