@@ -32,12 +32,24 @@ import (
 	"go.uber.org/zap"
 )
 
+func TestFile(t *testing.T) {
+	t.Log("TestFile")
+	dirpath, err := ioutil.TempDir(os.TempDir(), "prefix")
+	if err != nil {
+		t.Fatal("err")
+	}
+	defer os.RemoveAll(dirpath)
+	t.Log(dirpath)
+
+}
+
 func TestNew(t *testing.T) {
+	//创建临时文件夹
 	p, err := ioutil.TempDir(os.TempDir(), "waltest")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(p)
+	defer os.RemoveAll(p) //删除临时文件夹，包括其下所有文件
 
 	w, err := Create(zap.NewExample(), p, []byte("somedata"))
 	if err != nil {
@@ -86,6 +98,7 @@ func TestNew(t *testing.T) {
 	}
 }
 
+//从非空文件夹创建WAL，返回os.ErrExist 错误
 func TestCreateFailFromPollutedDir(t *testing.T) {
 	p, err := ioutil.TempDir(os.TempDir(), "waltest")
 	if err != nil {
@@ -95,6 +108,8 @@ func TestCreateFailFromPollutedDir(t *testing.T) {
 	ioutil.WriteFile(filepath.Join(p, "test.wal"), []byte("data"), os.ModeTemporary)
 
 	_, err = Create(zap.NewExample(), p, []byte("data"))
+	t.Log(p)
+	t.Log(err) //file already exists
 	if err != os.ErrExist {
 		t.Fatalf("expected %v, got %v", os.ErrExist, err)
 	}
@@ -113,12 +128,14 @@ func TestCreateFailFromNoSpaceLeft(t *testing.T) {
 	}()
 	SegmentSizeBytes = math.MaxInt64
 
+	//create时自动分配指定大小的文件
 	_, err = Create(zap.NewExample(), p, []byte("data"))
 	if err == nil { // no space left on device
 		t.Fatalf("expected error 'no space left on device', got nil")
 	}
 }
 
+//文件已存在
 func TestNewForInitedDir(t *testing.T) {
 	p, err := ioutil.TempDir(os.TempDir(), "waltest")
 	if err != nil {
@@ -175,7 +192,13 @@ func TestOpenAtIndex(t *testing.T) {
 		t.Errorf("seq = %d, want %d", w.seq(), 2)
 	}
 	w.Close()
+	files, err := ioutil.ReadDir(dir)
+	for _, f := range files {
+		t.Log(f.Name())
+	}
+}
 
+func TestFileNotfound(t *testing.T) {
 	emptydir, err := ioutil.TempDir(os.TempDir(), "waltestempty")
 	if err != nil {
 		t.Fatal(err)
@@ -249,6 +272,7 @@ func TestCut(t *testing.T) {
 	}
 }
 
+//wal文件满足SegmentSizeBytes大小后会自动分配新的文件，Cut是自动调用
 func TestSaveWithCut(t *testing.T) {
 	p, err := ioutil.TempDir(os.TempDir(), "waltest")
 	if err != nil {

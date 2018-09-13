@@ -69,8 +69,9 @@ var (
 // A newly created WAL is in append mode, and ready for appending records.
 // A just opened WAL is in read mode, and ready for reading records.
 // The WAL will be ready for appending after reading out all the previous records.
-//有read和append两种模式。create是append模式。open是read模式。
-//read完所有之前的记录后变成append模式
+//有read和append两种模式。
+// create是append模式。
+// open是read模式,read完所有之前的记录后变成append模式
 type WAL struct {
 	lg *zap.Logger
 
@@ -293,6 +294,7 @@ func (w *WAL) renameWALUnlock(tmpdirpath string) (*WAL, error) {
 // The returned WAL is ready to read and the first record will be the one after
 // the given snap. The WAL cannot be appended to before reading out all of its
 // previous records.
+// 打开指定快照下的WAL
 func Open(lg *zap.Logger, dirpath string, snap walpb.Snapshot) (*WAL, error) {
 	w, err := openAtIndex(lg, dirpath, snap, true)
 	if err != nil {
@@ -612,6 +614,7 @@ func (w *WAL) sync() error {
 // except the largest one among them.
 // For example, if WAL is holding lock 1,2,3,4,5,6, ReleaseLockTo(4) will release
 // lock 1,2 but keep 3. ReleaseLockTo(5) will release 1,2,3 but keep 4.
+// 释放锁
 func (w *WAL) ReleaseLockTo(index uint64) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
