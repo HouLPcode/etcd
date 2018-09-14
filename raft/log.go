@@ -21,6 +21,7 @@ import (
 	pb "go.etcd.io/etcd/raft/raftpb"
 )
 
+//日志转换流程  unstable-> storage-> committed-> applied
 type raftLog struct {
 	// storage contains all stable entries since the last snapshot.
 	storage Storage
